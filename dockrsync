@@ -1,0 +1,369 @@
+#!/bin/bash
+
+which realpath >/dev/null
+REALPATH_EMULATE=$?
+
+if [ "$REALPATH_EMULATE" -gt 0 ]; then
+  function realpath {
+    perl -MCwd=realpath -e "print realpath '$1'"
+  }
+fi
+
+CALLING_DIR="$(realpath "$(pwd)")"
+
+function help {
+    echo "Local docker in VM client."
+    echo
+    echo "Usage:"
+    echo "  ${0} command"
+    echo
+    echo "Available commands:"
+    echo "   watch             Watch local changes and synchronize with the remote environment"
+    echo "   bash              Open a bash session in the remote environment service"
+    echo "   fetch             Sync remote changes to the local filesystem"
+    echo "   push              Sync local changes to the remote filesystem"
+    echo "   forward           Forward a port to a service container"
+    echo "   exec              Execute a command on a service container"
+    echo "   checkversion      Check for updates to this tool"
+}
+
+function open_anybar {
+    if [ -n "$ANYBAR_PORT" ]; then
+        trap quit_anybar SIGINT
+        ANYBAR_PORT=$ANYBAR_PORT open -a AnyBar
+    fi
+}
+
+function quit_anybar {
+    anybar quit
+}
+
+function anybar {
+    if [ -n "$ANYBAR_PORT" ]; then
+        echo -n "$1" | nc -4u -w0 localhost "$ANYBAR_PORT"
+    fi
+}
+
+function service_specified {
+   if [ -z "$1" ] && [ -z "$(default_service)" ]; then
+       echo "You need to specify the service to use with this command"
+       exit;
+   fi
+}
+
+function service {
+   if [ -n "$1" ]; then
+        echo "$1"
+        exit
+   fi
+
+   default_service
+}
+
+command_exists () {
+    type "$1" &> /dev/null ;
+}
+
+function dir {
+    echo "$CALLING_DIR"
+}
+
+function settings_file {
+    echo "$(dir)/.dockrsync-settings"
+}
+
+function excludes_file {
+
+    EXCLUDES_FILE="$(dir)/.cp-remote-ignore"
+
+    if [ ! -f "${EXCLUDES_FILE}" ]; then
+        touch "${EXCLUDES_FILE}"
+    fi
+
+    echo "${EXCLUDES_FILE}"
+}
+
+function fetch_excludes_file {
+
+    EXCLUDES_FILE="$(dir)/.cp-remote-ignore-fetch"
+
+    if [ ! -f "${EXCLUDES_FILE}" ]; then
+        touch "${EXCLUDES_FILE}"
+    fi
+
+    echo "${EXCLUDES_FILE}"
+}
+
+function default_service {
+    echo "${DEFAULT_SERVICE:-$DEFAULT_CONTAINER}"
+}
+
+function keen_write_key {
+     echo "$KEEN_WRITE_KEY"
+}
+
+function keen_project_id {
+    echo "$KEEN_PROJECT_ID"
+}
+
+function keen_event_collection {
+    echo "$KEEN_EVENT_COLLECTION"
+}
+
+function container {
+    local -r SERVICE="$(service "$1")"
+    docker-compose ps -q "$SERVICE"
+}
+
+function container_found {
+    if [ -z "$1" ]; then
+        echo
+        echo "The container could not be found, is your configuration correct and is the specified service name correct?"
+        echo
+        exit;
+    fi
+}
+
+function exec_tty_cmd {
+    local -r SERVICE="$(service "$1")"
+    local -r CONTAINER="$(container "$SERVICE")"
+    container_found "$CONTAINER"
+    echo "docker exec -it '$CONTAINER'"
+}
+
+function exec_notty_cmd {
+    local -r SERVICE="$(service "$1")"
+    local -r CONTAINER="$(container "$SERVICE")"
+    container_found "$CONTAINER"
+    echo "docker exec -i '$CONTAINER'"
+}
+
+function validate_settings {
+
+    if [ ! -f "$(settings_file)" ]; then
+         echo "The remote settings file is missing, please run the setup command"
+         exit;
+    fi
+
+    # shellcheck source=/dev/null
+    source "$(settings_file)"
+
+    REQUIRED_SETTINGS=()
+    for i in "${REQUIRED_SETTINGS[@]}"
+    do
+        if [ -z "${!i}" ]; then
+            echo "Required setting $i missing, please run the setup command"
+            exit
+        fi
+    done
+}
+
+function setup {
+    REMOTE_DIR="$(settings_file)"
+
+    read -r -p "What is the default service for the watch, bash, fetch and push commands? (Optional) " DEFAULT_SERVICE
+    read -r -p "If you want to use AnyBar, please provide a port number e.g 1738 ? " ANYBAR_PORT
+    read -r -p "What is your keen.io write key? (Optional, only needed if you want to record usage stats) " KEEN_WRITE_KEY
+    read -r -p "What is your keen.io project id? (Optional, only needed if you want to record usage stats) " KEEN_PROJECT_ID
+    read -r -p "What is your keen.io event collection?  (Optional, only needed if you want to record usage stats) " KEEN_EVENT_COLLECTION
+
+
+    {
+        echo "DEFAULT_SERVICE=$DEFAULT_SERVICE"
+        echo "ANYBAR_PORT=$ANYBAR_PORT"
+        echo "KEEN_WRITE_KEY=$KEEN_WRITE_KEY"
+        echo "KEEN_PROJECT_ID=$KEEN_PROJECT_ID"
+        echo "KEEN_EVENT_COLLECTION=$KEEN_EVENT_COLLECTION"
+    } > "$REMOTE_DIR"
+    echo "remotefs settings written to $REMOTE_DIR"
+}
+
+function log {
+    PROJECT_ID="$(keen_project_id)"
+    WRITE_KEY="$(keen_write_key)"
+    EVENT_COLLECTION="$(keen_event_collection)"
+
+    if [ -z "$PROJECT_ID" ] || [ -z "$WRITE_KEY" ] || [ -z "$EVENT_COLLECTION" ]; then
+        echo "Not logging usage stats as keen.io details not set"
+        exit 0
+    else
+        echo "Logging usage stats to keen.io"
+    fi
+
+    END_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
+    PAYLOAD='{"project": "'"$(project_key)"'" ,"namespace": "'"$(namespace)"'","command": "'"$1"'","start-time": '$2',"end-time": '$END_TIME'}'
+    curl -s "https://api.keen.io/3.0/projects/$PROJECT_ID/events/$EVENT_COLLECTION?api_key=$WRITE_KEY" -H "Content-Type: application/json" -d "$PAYLOAD" >/dev/null
+}
+
+function sh {
+    bash "$@"
+}
+
+function bash {
+    SERVICE="$1"
+    cmd="$(exec_tty_cmd "$SERVICE") /bin/bash"
+    echo "Running: '${cmd}'."
+    eval "${cmd}"
+}
+
+function watch {
+    open_anybar
+    # Sync latency / speed in seconds
+    LATENCY="1"
+    PROJECT_DIR_WITH_DOT="$(dir)/."
+    SERVICE="$1"
+
+    echo "The watch command will need to be restarted after rebuilding the remote environment"
+    # Watch for changes and sync (exclude hidden files)
+    echo    "Watching for changes. Quit anytime with Ctrl-C."
+    anybar green
+    fswatch -0 -r -l "$LATENCY" --exclude="/\.[^/]*$" --exclude="\.idea" --exclude="\.git" --exclude="___jb_old___" --exclude="___jb_tmp___" "$(dir)" \
+    | while read -r -d "" event
+      do
+        anybar orange
+        echo "$(date)" "\"$event\" changed. Synchronizing... "
+        file="${event/$(dir)/$PROJECT_DIR_WITH_DOT}"
+        echo
+
+        rsync --relative -rlptDv --exclude-from="$(excludes_file)" -e "$(exec_notty_cmd "$SERVICE")" "$file" env:/app
+        echo "done."
+        anybar green
+      done
+}
+
+function push {
+    open_anybar
+    START_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
+    SERVICE="$1"
+
+    anybar red
+
+    rsync -zrlptDv --blocking-io  --force --exclude=".*" --exclude-from="$(excludes_file)" \
+        -e "$(exec_notty_cmd "$SERVICE")" "$(dir)/." env:/app
+
+    anybar green
+    log "push" "$START_TIME"
+}
+
+function fetch {
+    open_anybar
+    START_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
+    SERVICE="$1"
+
+    rsync -zrlptDv --blocking-io  --force --exclude=".*" --exclude-from="$(excludes_file)" --exclude-from="$(fetch_excludes_file)" \
+        -e "$(exec_notty_cmd "$SERVICE")" env:/app/ "$(dir)"
+
+    anybar green
+    log "fetch" "$START_TIME"
+}
+
+function port_forward {
+    echo "Port forward not implemented yet"
+    exit
+}
+
+function check_version {
+
+    CURRENT_VERSION=$(grep "^# Version" "${0}" | head -1 | awk '{print $3}')
+    LATEST_VERSION=$(curl -s https://raw.githubusercontent.com/continuouspipe/remote-environment-client/gh-pages/downloads/cp-remote-latest | grep "^# Version" | head -1 | awk '{print $3}')
+
+    if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+        echo
+        echo "You do not have the latest version of this tool."
+        echo
+        echo "You are using version $CURRENT_VERSION"
+        echo "To install $LATEST_VERSION run:"
+        echo
+        echo "sudo curl https://continuouspipe.github.io/remote-environment-client/downloads/cp-remote-latest > /usr/local/bin/cp-remote && chmod +x /usr/local/bin/cp-remote"
+        echo
+    else
+        echo
+        echo "You are using the latest version ($LATEST_VERSION) of this tool"
+    fi
+
+}
+
+function exec {
+    if [ "$1" != "--" ] && [ "$2" != "--" ]; then
+        echo "The command to run should be specified after --"
+        echo "The only argument before the -- should be the service name (which can be left off to use the default service)"
+        exit
+    fi
+
+    if [[ $1 == "--" ]]; then
+        SERVICE=$(service "")
+    fi
+
+    if [[ $2 == "--" ]]; then
+        SERVICE=$(service "$1")
+        shift
+    fi
+    shift
+
+    cmd="$(exec_tty_cmd "$SERVICE") $@"
+    echo "Running: '${cmd}'."
+    eval "${cmd}"
+}
+
+case $1 in
+    -h|--help|help)
+    help
+    exit 0
+    ;;
+    setup|watch|bash|fetch|push|sync|forward|exec|checkversion)
+    COMMAND="$1"
+    ;;
+    *)
+        echo "Unknown option: $1"
+    ;;
+esac
+
+if [ -z "${COMMAND+x}" ]; then
+    help
+    exit 0
+fi
+
+case $COMMAND in
+    setup)
+        setup
+        ;;
+    watch)
+        validate_settings
+        service_specified "$2"
+        watch "$(service "$2")"
+        ;;
+    bash)
+        validate_settings
+        service_specified "$2"
+        bash "$(service "$2")"
+        ;;
+    push|sync)
+        validate_settings
+        service_specified "$2"
+        push "$(service "$2")"
+        ;;
+    fetch)
+        validate_settings
+        service_specified "$2"
+        fetch "$(service "$2")"
+        ;;
+    forward)
+        service_specified "$2"
+        validate_settings
+        port_forward "$2" "$3" "$4"
+        ;;
+    exec)
+        validate_settings
+        shift
+        exec "$@"
+        ;;
+    checkversion)
+        check_version
+        ;;
+    *)
+        echo "Command not found: $COMMAND"
+        echo
+        help
+        exit 1
+        ;;
+esac
