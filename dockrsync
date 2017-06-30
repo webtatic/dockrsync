@@ -69,12 +69,12 @@ function dir {
 }
 
 function settings_file {
-    echo "$(dir)/.dockrsync-settings"
+    echo "$(dir)/.dockrsync"
 }
 
 function excludes_file {
 
-    EXCLUDES_FILE="$(dir)/.cp-remote-ignore"
+    EXCLUDES_FILE="$(dir)/.dockrsync-ignore"
 
     if [ ! -f "${EXCLUDES_FILE}" ]; then
         touch "${EXCLUDES_FILE}"
@@ -85,7 +85,7 @@ function excludes_file {
 
 function fetch_excludes_file {
 
-    EXCLUDES_FILE="$(dir)/.cp-remote-ignore-fetch"
+    EXCLUDES_FILE="$(dir)/.dockrsync-ignore-fetch"
 
     if [ ! -f "${EXCLUDES_FILE}" ]; then
         touch "${EXCLUDES_FILE}"
@@ -96,18 +96,6 @@ function fetch_excludes_file {
 
 function default_service {
     echo "${DEFAULT_SERVICE:-$DEFAULT_CONTAINER}"
-}
-
-function keen_write_key {
-     echo "$KEEN_WRITE_KEY"
-}
-
-function keen_project_id {
-    echo "$KEEN_PROJECT_ID"
-}
-
-function keen_event_collection {
-    echo "$KEEN_EVENT_COLLECTION"
 }
 
 function container {
@@ -163,36 +151,16 @@ function setup {
 
     read -r -p "What is the default service for the watch, bash, fetch and push commands? (Optional) " DEFAULT_SERVICE
     read -r -p "If you want to use AnyBar, please provide a port number e.g 1738 ? " ANYBAR_PORT
-    read -r -p "What is your keen.io write key? (Optional, only needed if you want to record usage stats) " KEEN_WRITE_KEY
-    read -r -p "What is your keen.io project id? (Optional, only needed if you want to record usage stats) " KEEN_PROJECT_ID
-    read -r -p "What is your keen.io event collection?  (Optional, only needed if you want to record usage stats) " KEEN_EVENT_COLLECTION
-
 
     {
         echo "DEFAULT_SERVICE=$DEFAULT_SERVICE"
         echo "ANYBAR_PORT=$ANYBAR_PORT"
-        echo "KEEN_WRITE_KEY=$KEEN_WRITE_KEY"
-        echo "KEEN_PROJECT_ID=$KEEN_PROJECT_ID"
-        echo "KEEN_EVENT_COLLECTION=$KEEN_EVENT_COLLECTION"
     } > "$REMOTE_DIR"
     echo "remotefs settings written to $REMOTE_DIR"
 }
 
 function log {
-    PROJECT_ID="$(keen_project_id)"
-    WRITE_KEY="$(keen_write_key)"
-    EVENT_COLLECTION="$(keen_event_collection)"
-
-    if [ -z "$PROJECT_ID" ] || [ -z "$WRITE_KEY" ] || [ -z "$EVENT_COLLECTION" ]; then
-        echo "Not logging usage stats as keen.io details not set"
-        exit 0
-    else
-        echo "Logging usage stats to keen.io"
-    fi
-
-    END_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
-    PAYLOAD='{"project": "'"$(project_key)"'" ,"namespace": "'"$(namespace)"'","command": "'"$1"'","start-time": '$2',"end-time": '$END_TIME'}'
-    curl -s "https://api.keen.io/3.0/projects/$PROJECT_ID/events/$EVENT_COLLECTION?api_key=$WRITE_KEY" -H "Content-Type: application/json" -d "$PAYLOAD" >/dev/null
+    :
 }
 
 function sh {
