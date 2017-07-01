@@ -218,7 +218,7 @@ function fetch {
     START_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
     SERVICE="$1"
 
-    rsync -zrlptDv --blocking-io  --force --exclude=".*" --exclude-from="$(excludes_file)" --exclude-from="$(fetch_excludes_file)" \
+    rsync -zrlptDv --blocking-io  --force --exclude=".*" --exclude-from="$(fetch_excludes_file)" --exclude-from="$(excludes_file)" \
         -e "$(exec_notty_cmd "$SERVICE")" env:/app/ "$(dir)"
 
     anybar green
