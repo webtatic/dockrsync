@@ -18,10 +18,10 @@ function help {
     echo "  ${0} command"
     echo
     echo "Available commands:"
-    echo "   watch             Watch local changes and synchronize with the remote environment"
-    echo "   bash              Open a bash session in the remote environment service"
-    echo "   fetch             Sync remote changes to the local filesystem"
-    echo "   push              Sync local changes to the remote filesystem"
+    echo "   watch             Watch local changes and synchronize with the docker container environment"
+    echo "   bash              Open a bash session in the docker container"
+    echo "   fetch             Sync container changes to the local filesystem"
+    echo "   push              Sync local changes to the container filesystem"
     echo "   forward           Forward a port to a service container"
     echo "   exec              Execute a command on a service container"
     echo "   checkversion      Check for updates to this tool"
@@ -131,7 +131,7 @@ function exec_notty_cmd {
 function validate_settings {
 
     if [ ! -f "$(settings_file)" ]; then
-         echo "The remote settings file is missing, please run the setup command"
+         echo "The .dockrsync settings file is missing, please run the setup command"
          exit;
     fi
 
@@ -185,7 +185,6 @@ function watch {
     PROJECT_DIR_WITH_DOT="$(dir)/."
     SERVICE="$1"
 
-    echo "The watch command will need to be restarted after rebuilding the remote environment"
     # Watch for changes and sync (exclude hidden files)
     echo    "Watching for changes. Quit anytime with Ctrl-C."
     anybar green
