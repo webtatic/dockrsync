@@ -44,6 +44,12 @@ function anybar {
     fi
 }
 
+function get_delete_flag {
+  if [ "$DELETE_FLAG" = "yes" ]; then
+    RSYNC_DELETE_FLAG="--delete"
+  fi
+}
+
 function service_specified {
    if [ -z "$1" ] && [ -z "$(default_service)" ]; then
        echo "You need to specify the service to use with this command"
@@ -153,10 +159,12 @@ function setup {
 
     read -r -p "What is the default service for the watch, bash, fetch and push commands? (Optional) " DEFAULT_SERVICE
     read -r -p "If you want to use AnyBar, please provide a port number e.g 1738 ? " ANYBAR_PORT
+    read -r -p "Do you want to enable delete flag on watch/fetch/push operations? (yes|no) " DELETE_FLAG
 
     {
         echo "DEFAULT_SERVICE=$DEFAULT_SERVICE"
         echo "ANYBAR_PORT=$ANYBAR_PORT"
+        echo "DELETE_FLAG=$DELETE_FLAG"
     } > "$REMOTE_DIR"
     echo "dockrsync settings written to $REMOTE_DIR"
 
@@ -180,6 +188,7 @@ function bash {
 
 function watch {
     open_anybar
+    get_delete_flag
     # Sync latency / speed in seconds
     LATENCY="1"
     PROJECT_DIR_WITH_DOT="$(dir)/."
@@ -194,9 +203,16 @@ function watch {
         anybar orange
         echo "$(date)" "\"$event\" changed. Synchronizing... "
         file="${event/$(dir)/$PROJECT_DIR_WITH_DOT}"
+
+        if [ -n "$RSYNC_DELETE_FLAG" ]; then
+          if [ ! -f $file ]; then
+            file="$(dirname "$file")"
+          fi
+        fi
+
         echo
 
-        rsync --relative -rlptDv --exclude-from="$(excludes_file)" -e "$(exec_notty_cmd "$SERVICE")" "$file" env:/app
+        rsync --relative $RSYNC_DELETE_FLAG -rlptDv --exclude-from="$(excludes_file)" -e "$(exec_notty_cmd "$SERVICE")" "$file" env:/app
         echo "done."
         anybar green
       done
@@ -204,12 +220,13 @@ function watch {
 
 function push {
     open_anybar
+    get_delete_flag
     START_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
     SERVICE="$1"
 
     anybar red
 
-    rsync -zrlptDv --blocking-io  --force --exclude-from="$(excludes_file)" \
+    rsync -zrlptDv --blocking-io  --force $RSYNC_DELETE_FLAG --exclude-from="$(excludes_file)" \
         -e "$(exec_notty_cmd "$SERVICE")" "$(dir)/." env:/app
 
     anybar green
@@ -218,10 +235,13 @@ function push {
 
 function fetch {
     open_anybar
+    get_delete_flag
     START_TIME="$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")"
     SERVICE="$1"
 
-    rsync -zrlptDv --blocking-io  --force --exclude-from="$(fetch_excludes_file)" --exclude-from="$(excludes_file)" \
+    anybar red
+
+    rsync -zrlptDv --blocking-io  --force $RSYNC_DELETE_FLAG --exclude-from="$(fetch_excludes_file)" --exclude-from="$(excludes_file)" \
         -e "$(exec_notty_cmd "$SERVICE")" env:/app/ "$(dir)"
 
     anybar green
@@ -234,24 +254,8 @@ function port_forward {
 }
 
 function check_version {
-
-    CURRENT_VERSION=$(grep "^# Version" "${0}" | head -1 | awk '{print $3}')
-    LATEST_VERSION=$(curl -s https://raw.githubusercontent.com/continuouspipe/remote-environment-client/gh-pages/downloads/cp-remote-latest | grep "^# Version" | head -1 | awk '{print $3}')
-
-    if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-        echo
-        echo "You do not have the latest version of this tool."
-        echo
-        echo "You are using version $CURRENT_VERSION"
-        echo "To install $LATEST_VERSION run:"
-        echo
-        echo "sudo curl https://continuouspipe.github.io/remote-environment-client/downloads/cp-remote-latest > /usr/local/bin/cp-remote && chmod +x /usr/local/bin/cp-remote"
-        echo
-    else
-        echo
-        echo "You are using the latest version ($LATEST_VERSION) of this tool"
-    fi
-
+    echo "Check version not implemented yet"
+    exit
 }
 
 function exec {
