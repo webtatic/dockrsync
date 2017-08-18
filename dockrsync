@@ -212,7 +212,7 @@ function watch {
 
         echo
 
-        rsync --relative $RSYNC_DELETE_FLAG -rlptDv --exclude-from="$(excludes_file)" -e "$(exec_notty_cmd "$SERVICE")" "$file" env:/app
+        rsync --blocking-io --relative $RSYNC_DELETE_FLAG -rlptDv --exclude-from="$(excludes_file)" -e "$(exec_notty_cmd "$SERVICE")" "$file" env:/app
         echo "done."
         anybar green
       done
